@@ -16,6 +16,7 @@ namespace ConanMultiServerLauncher
         private readonly ProfilesService _profilesService = new();
         private ObservableCollection<Profile> _profiles = new();
         private Profile? _current;
+        private bool _isInitializing = true; // suppress SelectionChanged side-effects during startup
 
         public MainWindow()
         {
@@ -35,6 +36,9 @@ namespace ConanMultiServerLauncher
             }
 
             RefreshModListPathLabel();
+
+            // Finish initialization; from now on SelectionChanged should persist settings
+            _isInitializing = false;
         }
 
         private void LoadProfiles()
@@ -409,6 +413,8 @@ namespace ConanMultiServerLauncher
 
         private void ProfilesCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
+            if (_isInitializing) return; // ignore events during startup
+
             if (ProfilesCombo.SelectedItem is Profile p)
             {
                 SetCurrent(p);
