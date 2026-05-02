@@ -44,6 +44,36 @@ namespace ConanMultiServerLauncher.Services
             return File.Exists(exe) ? exe : null;
         }
 
+        public static string? GetSteamCmdExe()
+        {
+            // 1. Check same directory as launcher
+            var local = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "steamcmd.exe");
+            if (File.Exists(local)) return local;
+
+            // 2. Check Steam root
+            var steamRoot = GetSteamRoot();
+            if (steamRoot != null)
+            {
+                var path = Path.Combine(steamRoot, "steamcmd.exe");
+                if (File.Exists(path)) return path;
+                
+                // Also check a subdirectory "steamcmd" under steam root
+                path = Path.Combine(steamRoot, "steamcmd", "steamcmd.exe");
+                if (File.Exists(path)) return path;
+            }
+
+            // 3. Check common installation path C:\steamcmd
+            var commonPath = @"C:\steamcmd\steamcmd.exe";
+            if (File.Exists(commonPath)) return commonPath;
+
+            // 4. Check LocalAppData (sometimes installed there)
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var localAppPath = Path.Combine(localAppData, "steamcmd", "steamcmd.exe");
+            if (File.Exists(localAppPath)) return localAppPath;
+
+            return null;
+        }
+
         // 2) Enumerate all Steam library roots (…\steamapps)
         private static IEnumerable<string> EnumerateSteamAppsRoots()
         {

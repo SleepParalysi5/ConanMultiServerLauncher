@@ -14,7 +14,13 @@ namespace ConanMultiServerLauncher
             CloseAfterLaunchCheck.IsChecked = _settings.CloseLauncherAfterLaunch;
             WriteModListOnChangeCheck.IsChecked = _settings.WriteModListOnProfileChange;
             TextureStreamingCheck.IsChecked = _settings.TextureStreamingEnabled;
-            SteamCmdPathBox.Text = _settings.SteamCmdPath ?? string.Empty;
+            
+            var currentPath = _settings.SteamCmdPath;
+            if (string.IsNullOrWhiteSpace(currentPath) || !System.IO.File.Exists(currentPath))
+            {
+                currentPath = SteamCmdService.GetSteamCmdPath();
+            }
+            SteamCmdPathBox.Text = currentPath ?? string.Empty;
         }
 
         private void BrowseSteamCmd_Click(object sender, RoutedEventArgs e)

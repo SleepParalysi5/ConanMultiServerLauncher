@@ -16,11 +16,7 @@ namespace ConanMultiServerLauncher.Services
             if (!string.IsNullOrWhiteSpace(settings.SteamCmdPath) && File.Exists(settings.SteamCmdPath))
                 return settings.SteamCmdPath;
 
-            // Try to find it in the same directory as the launcher
-            var local = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "steamcmd.exe");
-            if (File.Exists(local)) return local;
-
-            return null;
+            return PathsService.GetSteamCmdExe();
         }
 
         public static async Task DownloadModsAsync(IEnumerable<long> modIds, Action<string>? logger = null, CancellationToken ct = default)
