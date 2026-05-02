@@ -103,5 +103,50 @@ namespace ConanMultiServerLauncher.Services
             }
             return result.Distinct().ToList();
         }
+        public static async Task<List<ModUpdateInfo>> GetModsUpdateInfoAsync(IEnumerable<long> ids)
+        {
+            var list = ids?.Distinct().ToList() ?? new();
+            if (list.Count == 0) return new List<ModUpdateInfo>();
+
+            var result = new List<ModUpdateInfo>();
+            const int batch = 100;
+            for (int i = 0; i < list.Count; i += batch)
+            {
+                var slice = list.Skip(i).Take(batch).ToList();
+                var url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
+                var kv = new List<KeyValuePair<string, string>> { new("itemcount", slice.Count.ToString()) };
+                for (int j = 0; j < slice.Count; j++)
+                    kv.Add(new($"publishedfileids[{j}]", slice[j].ToString()));
+
+                using var form = new FormUrlEncodedContent(kv);
+                using var resp = await Http.PostAsync(url, form).ConfigureAwait(false);
+                resp.EnsureSuccessStatusCode();
+                var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(json);
+                var details = doc.RootElement.GetProperty("response").GetProperty("publishedfiledetails").EnumerateArray();
+                foreach (var d in details)
+                {
+                    if (d.TryGetProperty("publishedfileid", out var idProp) && 
+                        long.TryParse(idProp.GetString(), out var id))
+                    {
+                        var info = new ModUpdateInfo { PublishedFileId = id };
+                        if (d.TryGetProperty("time_updated", out var timeProp))
+                            info.TimeUpdated = timeProp.GetUInt64();
+                        if (d.TryGetProperty("title", out var titleProp))
+                            info.Title = titleProp.GetString();
+                        
+                        result.Add(info);
+                    }
+                }
+            }
+            return result;
+        }
+    }
+
+    public class ModUpdateInfo
+    {
+        public long PublishedFileId { get; set; }
+        public ulong TimeUpdated { get; set; } // Unix timestamp from Steam
+        public string? Title { get; set; }
     }
 }

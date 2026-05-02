@@ -8,28 +8,99 @@ namespace ConanMultiServerLauncher.Services
 {
     public static class GameConfigService
     {
-        // Updates LastConnectedServerIP/Port/Password in GameUserSettings.ini
+        // Updates LastConnected, LastPassword and StartedListenServerSession in Game.ini
         public static void UpdateLastConnectedServer(string? serverAddress, string? password)
         {
-            var iniPath = PathsService.GetGameUserSettingsIni();
-            Directory.CreateDirectory(Path.GetDirectoryName(iniPath)!);
+            UpdateGameIni(serverAddress, password, false);
+        }
 
-            // Parse ip and port
-            var (ip, port) = ParseServerAddress(serverAddress);
+        public static void UpdateSingleplayerMode()
+        {
+            UpdateGameIni(null, null, true);
+        }
 
-            // Read existing lines or start a new file
-            var lines = File.Exists(iniPath) ? File.ReadAllLines(iniPath).ToList() : new List<string>();
+        private static void UpdateGameIni(string? serverAddress, string? password, bool isSingleplayer)
+        {
+            // Update BOTH LocalAppData and Game-folder config files
+            UpdateGameIniAtPath(PathsService.GetGameIni(true), serverAddress, password, isSingleplayer);
+            
+            var gameFolderIni = PathsService.GetGameIni(false);
+            if (!string.IsNullOrEmpty(gameFolderIni))
+            {
+                UpdateGameIniAtPath(gameFolderIni, serverAddress, password, isSingleplayer);
+            }
 
-            // Ensure [ServerSettings] section exists and get its range
-            EnsureSection(lines, "ServerSettings");
-            var (start, end) = GetSectionRange(lines, "ServerSettings");
+            // To be absolutely sure, we also update GameUserSettings.ini for StartedListenServerSession
+            UpdateGameUserSettingsIni(isSingleplayer);
+        }
 
-            // Upsert keys inside the section
-            UpsertKey(lines, start, end, "LastConnectedServerIP", ip ?? string.Empty);
-            UpsertKey(lines, start, end, "LastConnectedServerPort", port.ToString());
-            UpsertKey(lines, start, end, "LastConnectedServerPassword", password ?? string.Empty);
+        private static void UpdateGameIniAtPath(string iniPath, string? serverAddress, string? password, bool isSingleplayer)
+        {
+            if (string.IsNullOrEmpty(iniPath)) return;
+            
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(iniPath)!);
+                var lines = File.Exists(iniPath) ? File.ReadAllLines(iniPath).ToList() : new List<string>();
 
-            File.WriteAllLines(iniPath, lines, new UTF8Encoding(false));
+                // Sections we need to update
+                EnsureSection(lines, "SavedServers");
+                var (ssStart, ssEnd) = GetSectionRange(lines, "SavedServers");
+                if (serverAddress != null)
+                    UpsertKey(lines, ssStart, ssEnd, "LastConnected", serverAddress);
+                if (password != null)
+                    UpsertKey(lines, ssStart, ssEnd, "LastPassword", password);
+
+                EnsureSection(lines, "SavedCoopData");
+                var (scStart, scEnd) = GetSectionRange(lines, "SavedCoopData");
+                UpsertKey(lines, scStart, scEnd, "StartedListenServerSession", isSingleplayer ? "True" : "False");
+
+                // Redundantly update [ServerSettings] as some game versions use it
+                EnsureSection(lines, "ServerSettings");
+                var (serStart, serEnd) = GetSectionRange(lines, "ServerSettings");
+                if (serverAddress != null)
+                    UpsertKey(lines, serStart, serEnd, "LastConnected", serverAddress);
+                if (password != null)
+                    UpsertKey(lines, serStart, serEnd, "LastPassword", password);
+
+                File.WriteAllLines(iniPath, lines, new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GameConfigService] Failed to update Game.ini at {iniPath}: {ex.Message}");
+            }
+        }
+
+        private static void UpdateGameUserSettingsIni(bool isSingleplayer)
+        {
+            UpdateGameUserSettingsIniAtPath(PathsService.GetGameUserSettingsIni(true), isSingleplayer);
+            
+            var gameFolderIni = PathsService.GetGameUserSettingsIni(false);
+            if (!string.IsNullOrEmpty(gameFolderIni))
+            {
+                UpdateGameUserSettingsIniAtPath(gameFolderIni, isSingleplayer);
+            }
+        }
+
+        private static void UpdateGameUserSettingsIniAtPath(string iniPath, bool isSingleplayer)
+        {
+            if (string.IsNullOrEmpty(iniPath)) return;
+            
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(iniPath)!);
+                var lines = File.Exists(iniPath) ? File.ReadAllLines(iniPath).ToList() : new List<string>();
+
+                EnsureSection(lines, "SavedCoopData");
+                var (start, end) = GetSectionRange(lines, "SavedCoopData");
+                UpsertKey(lines, start, end, "StartedListenServerSession", isSingleplayer ? "True" : "False");
+
+                File.WriteAllLines(iniPath, lines, new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GameConfigService] Failed to update GameUserSettings.ini at {iniPath}: {ex.Message}");
+            }
         }
 
         private static (string? ip, int port) ParseServerAddress(string? serverAddress)

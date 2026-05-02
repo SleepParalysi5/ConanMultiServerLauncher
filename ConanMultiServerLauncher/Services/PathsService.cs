@@ -178,16 +178,6 @@ namespace ConanMultiServerLauncher.Services
             return File.Exists(launcher) ? launcher : null;
         }
 
-        // Resolve path to GameUserSettings.ini under LocalAppData
-        public static string GetGameUserSettingsIni()
-        {
-            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            var iniDir = Path.Combine(localAppData, "ConanSandbox", "Saved", "Config", "WindowsNoEditor");
-            Directory.CreateDirectory(iniDir);
-            return Path.Combine(iniDir, "GameUserSettings.ini");
-        }
-
-        // Resolve LocalAppData Conan config directory and modlist.txt path
         public static string GetLocalAppDataConanConfigDir()
         {
             var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -200,6 +190,32 @@ namespace ConanMultiServerLauncher.Services
         {
             var dir = GetLocalAppDataConanConfigDir();
             return Path.Combine(dir, "modlist.txt");
+        }
+
+        public static string GetGameIni(bool useLocalAppData = true)
+        {
+            if (useLocalAppData)
+            {
+                var dir = GetLocalAppDataConanConfigDir();
+                return Path.Combine(dir, "Game.ini");
+            }
+            
+            var root = GetConanRoot();
+            if (root == null) return null;
+            return Path.Combine(root, "ConanSandbox", "Saved", "Config", "WindowsNoEditor", "Game.ini");
+        }
+
+        public static string GetGameUserSettingsIni(bool useLocalAppData = true)
+        {
+            if (useLocalAppData)
+            {
+                var dir = GetLocalAppDataConanConfigDir();
+                return Path.Combine(dir, "GameUserSettings.ini");
+            }
+
+            var root = GetConanRoot();
+            if (root == null) return null;
+            return Path.Combine(root, "ConanSandbox", "Saved", "Config", "WindowsNoEditor", "GameUserSettings.ini");
         }
     }
 }

@@ -15,6 +15,7 @@ namespace ConanMultiServerLauncher
     {
         private readonly ProfilesService _profilesService = new();
         private ObservableCollection<Profile> _profiles = new();
+        private ObservableCollection<ModItem> _currentMods = new();
         private Profile? _current;
         private bool _isInitializing = true; // suppress SelectionChanged side-effects during startup
 
@@ -57,7 +58,8 @@ namespace ConanMultiServerLauncher
                 ProfileName.Text = string.Empty;
                 ServerAddress.Text = string.Empty;
                 ServerPassword.Password = string.Empty;
-                ModsList.ItemsSource = null;
+                _currentMods.Clear();
+                ModsList.ItemsSource = _currentMods;
                 ModsCountText.Text = "Mods: 0";
                 if (BattlEyeCheckbox != null) BattlEyeCheckbox.IsChecked = false;
             }
@@ -69,9 +71,54 @@ namespace ConanMultiServerLauncher
             ProfileName.Text = p.Name;
             ServerAddress.Text = p.ServerAddress ?? string.Empty;
             ServerPassword.Password = p.Password ?? string.Empty;
-            ModsList.ItemsSource = p.ModIds.Select(id => ModListService.GetDisplayLabelForId(id)).ToList();
+            
+            _currentMods.Clear();
+            foreach (var id in p.ModIds)
+            {
+                _currentMods.Add(new ModItem 
+                { 
+                    PublishedFileId = id, 
+                    DisplayLabel = ModListService.GetDisplayLabelForId(id) 
+                });
+            }
+            ModsList.ItemsSource = _currentMods;
+            
             ModsCountText.Text = $"Mods: {p.ModIds.Count}";
             if (BattlEyeCheckbox != null) BattlEyeCheckbox.IsChecked = p.BattlEyeEnabled;
+
+            // Trigger async update check
+            _ = CheckForModUpdatesAsync();
+        }
+
+        private async System.Threading.Tasks.Task<bool> CheckForModUpdatesAsync()
+        {
+            if (_current == null || _current.ModIds.Count == 0) return false;
+
+            bool anyUpdate = false;
+            try
+            {
+                var modIds = _current.ModIds.ToList();
+                var remoteInfos = await SteamWorkshopService.GetModsUpdateInfoAsync(modIds);
+                
+                foreach (var info in remoteInfos)
+                {
+                    var localPath = ModListService.TryGetPakPathForId(info.PublishedFileId);
+                    if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath)) continue;
+
+                    var localLastUpdate = new DateTimeOffset(File.GetLastWriteTimeUtc(localPath)).ToUnixTimeSeconds();
+                    bool needsUpdate = (long)info.TimeUpdated > localLastUpdate;
+                    if (needsUpdate) anyUpdate = true;
+
+                    var uiMod = _currentMods.FirstOrDefault(m => m.PublishedFileId == info.PublishedFileId);
+                    if (uiMod != null)
+                    {
+                        uiMod.NeedsUpdate = needsUpdate;
+                    }
+                }
+            }
+            catch { /* Ignore background check errors */ }
+
+            return anyUpdate;
         }
 
         private void NewProfile_Click(object sender, RoutedEventArgs e)
@@ -95,7 +142,7 @@ namespace ConanMultiServerLauncher
 
         private void SaveProfile_Click(object sender, RoutedEventArgs e)
         {
-            // Upsert by Name: if a profile with this name exists, override it; otherwise add new.
+            // Upsert logic: if a profile with this name exists, override it; otherwise update current or add new.
             var name = ProfileName.Text?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(name))
             {
@@ -105,50 +152,55 @@ namespace ConanMultiServerLauncher
 
             var serverAddr = string.IsNullOrWhiteSpace(ServerAddress.Text) ? null : ServerAddress.Text.Trim();
             var password = string.IsNullOrWhiteSpace(ServerPassword.Password) ? null : ServerPassword.Password;
-            var mods = _current?.ModIds?.ToList() ?? new List<long>();
+            var mods = _currentMods.Select(m => m.PublishedFileId).Distinct().ToList();
 
-            var existing = _profiles.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
-            var isUpdate = existing != null;
+            var existingWithNewName = _profiles.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
-            if (isUpdate && existing != null)
+            if (_current != null)
             {
-                // Update existing profile fields
-                existing.ServerAddress = serverAddr;
-                existing.Password = password;
-                existing.ModIds = mods.Distinct().ToList();
-                existing.BattlEyeEnabled = BattlEyeCheckbox?.IsChecked == true;
-                existing.Name = name; // keep normalized casing
-
-                // Remove any duplicates with same name except this one
-                for (int i = _profiles.Count - 1; i >= 0; i--)
+                // We have a currently selected profile (could be a "New Profile" dummy or an existing one)
+                if (!string.Equals(_current.Name, name, StringComparison.OrdinalIgnoreCase))
                 {
-                    var item = _profiles[i];
-                    if (ReferenceEquals(item, existing)) continue;
-                    if (string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase))
-                        _profiles.RemoveAt(i);
+                    // User changed the name in the text box.
+                    if (existingWithNewName != null && existingWithNewName != _current)
+                    {
+                        // The NEW name belongs to ANOTHER existing profile.
+                        var result = System.Windows.MessageBox.Show($"A profile named '{name}' already exists. Overwrite it with these settings?", "Confirm Overwrite", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                        if (result != MessageBoxResult.Yes) return;
+
+                        // Remove the other profile, we will update the current one to this name.
+                        _profiles.Remove(existingWithNewName);
+                    }
+                    _current.Name = name;
                 }
-                ProfilesCombo.SelectedItem = existing;
-                SetCurrent(existing);
             }
             else
             {
-                // Create new profile
-                var newProfile = new Profile
+                // No profile selected (e.g. all deleted), create a new one.
+                if (existingWithNewName != null)
                 {
-                    Name = name,
-                    ServerAddress = serverAddr,
-                    Password = password,
-                    ModIds = mods.Distinct().ToList(),
-                    BattlEyeEnabled = BattlEyeCheckbox?.IsChecked == true
-                };
-                _profiles.Add(newProfile);
-                ProfilesCombo.SelectedItem = newProfile;
-                SetCurrent(newProfile);
+                    _current = existingWithNewName;
+                }
+                else
+                {
+                    _current = new Profile { Name = name };
+                    _profiles.Add(_current);
+                }
             }
+
+            // Update fields
+            _current.ServerAddress = serverAddr;
+            _current.Password = password;
+            _current.ModIds = mods;
+            _current.BattlEyeEnabled = BattlEyeCheckbox?.IsChecked == true;
+
+            // Refresh UI
+            ProfilesCombo.SelectedItem = _current;
+            SetCurrent(_current);
 
             // Persist
             _profilesService.Save(_profiles.ToList());
-            System.Windows.MessageBox.Show(isUpdate ? "Profile updated." : "Profile created.");
+            System.Windows.MessageBox.Show("Profile saved.");
         }
 
         private void DeleteProfile_Click(object sender, RoutedEventArgs e)
@@ -169,21 +221,27 @@ namespace ConanMultiServerLauncher
                     ProfileName.Text = string.Empty;
                     ServerAddress.Text = string.Empty;
                     ServerPassword.Password = string.Empty;
-                    ModsList.ItemsSource = null;
+                    _currentMods.Clear();
+                    ModsList.ItemsSource = _currentMods;
                     ModsCountText.Text = "Mods: 0";
                 }
             }
         }
 
-        private void PasteMods_Click(object sender, RoutedEventArgs e)
+        private async void PasteMods_Click(object sender, RoutedEventArgs e)
         {
             if (_current == null) return;
-            if (!System.Windows.Clipboard.ContainsText())
+            
+            var dialog = new SteamModsDialog { Owner = this };
+            if (System.Windows.Clipboard.ContainsText())
             {
-                System.Windows.MessageBox.Show("Clipboard does not contain text.");
-                return;
+                dialog.ModsTextBox.Text = System.Windows.Clipboard.GetText();
+                dialog.ModsTextBox.SelectAll();
             }
-            var text = System.Windows.Clipboard.GetText();
+
+            if (dialog.ShowDialog() != true) return;
+            var text = dialog.ModsText;
+
             // Use tolerant parser: supports URLs, .pak filenames, and workshop paths
             var ids = ModListService.ExtractModIdsFromAny(text);
             if (ids.Count == 0)
@@ -191,7 +249,36 @@ namespace ConanMultiServerLauncher
                 System.Windows.MessageBox.Show("No Workshop IDs found. Tip: paste Steam Workshop URLs/IDs, .pak filenames (e.g. workshop_1234567890.pak), or full .pak paths.");
                 return;
             }
+            
             MergeMods(ids);
+
+            // Download missing mods
+            var missingIds = ids.Where(id => ModListService.TryGetPakPathForId(id) == null).ToList();
+            if (missingIds.Count > 0)
+            {
+                var result = System.Windows.MessageBox.Show($"{missingIds.Count} mods are not installed. Would you like to download them now via SteamCMD?", "Download Missing Mods", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (result == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
+                        await SteamCmdService.DownloadModsAsync(missingIds, msg => {
+                            Debug.WriteLine($"[SteamCMD] {msg}");
+                        });
+                        System.Windows.MessageBox.Show("Download complete.");
+                        // Refresh mod list to update "not installed" labels
+                        SetCurrent(_current);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Windows.MessageBox.Show($"Download failed: {ex.Message}\n\nMake sure steamcmd.exe path is set in settings.");
+                    }
+                    finally
+                    {
+                        System.Windows.Input.Mouse.OverrideCursor = null;
+                    }
+                }
+            }
         }
 
         private void LoadModsFromFile_Click(object sender, RoutedEventArgs e)
@@ -216,15 +303,20 @@ namespace ConanMultiServerLauncher
         private async void PasteCollection_Click(object sender, RoutedEventArgs e)
         {
             if (_current == null) return;
-            if (!System.Windows.Clipboard.ContainsText())
+            
+            var dialog = new SteamCollectionDialog { Owner = this };
+            if (System.Windows.Clipboard.ContainsText())
             {
-                System.Windows.MessageBox.Show("Clipboard does not contain text.");
-                return;
+                dialog.UrlTextBox.Text = System.Windows.Clipboard.GetText();
+                dialog.UrlTextBox.SelectAll();
             }
-            var text = System.Windows.Clipboard.GetText();
+
+            if (dialog.ShowDialog() != true) return;
+            var text = dialog.CollectionText;
+
             if (!SteamWorkshopService.TryExtractCollectionId(text, out var collectionId))
             {
-                System.Windows.MessageBox.Show("Clipboard does not contain a Steam Workshop collection URL/ID.");
+                System.Windows.MessageBox.Show("Could not extract a Steam Workshop collection URL/ID from the input.");
                 return;
             }
             try
@@ -239,7 +331,32 @@ namespace ConanMultiServerLauncher
                     System.Windows.MessageBox.Show("The collection contains no items (or none for Conan Exiles).");
                     return;
                 }
+                
                 MergeMods(finalIds);
+
+                // Download missing mods
+                var missingIds = finalIds.Where(id => ModListService.TryGetPakPathForId(id) == null).ToList();
+                if (missingIds.Count > 0)
+                {
+                    var result = System.Windows.MessageBox.Show($"{missingIds.Count} mods in this collection are not installed. Would you like to download them now via SteamCMD?", "Download Missing Mods", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (result == MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            await SteamCmdService.DownloadModsAsync(missingIds, msg => {
+                                // Simple log to debug for now
+                                Debug.WriteLine($"[SteamCMD] {msg}");
+                            });
+                            System.Windows.MessageBox.Show("Download complete.");
+                            // Refresh mod list to update "not installed" labels
+                            SetCurrent(_current);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Windows.MessageBox.Show($"Download failed: {ex.Message}\n\nMake sure steamcmd.exe path is set in settings.");
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -255,8 +372,36 @@ namespace ConanMultiServerLauncher
         {
             if (_current == null) return;
             _current.ModIds.Clear();
-            ModsList.ItemsSource = _current.ModIds.Select(id => ModListService.GetDisplayLabelForId(id)).ToList();
+            _currentMods.Clear();
             ModsCountText.Text = "Mods: 0";
+        }
+
+        private async void CheckUpdatesManual_Click(object sender, RoutedEventArgs e)
+        {
+            if (_current == null || _current.ModIds.Count == 0)
+            {
+                System.Windows.MessageBox.Show("No mods to check.", "Check Updates", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var btn = (System.Windows.Controls.Button)sender;
+            var originalContent = btn.Content;
+            btn.Content = "Checking...";
+            btn.IsEnabled = false;
+
+            try
+            {
+                bool anyUpdate = await CheckForModUpdatesAsync();
+                if (!anyUpdate)
+                {
+                    System.Windows.MessageBox.Show("All mods are up to date.", "Check Updates", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            finally
+            {
+                btn.Content = originalContent;
+                btn.IsEnabled = true;
+            }
         }
 
         private void MergeMods(IEnumerable<long> ids)
@@ -269,12 +414,19 @@ namespace ConanMultiServerLauncher
                 if (set.Add(id))
                 {
                     _current.ModIds.Add(id);
+                    _currentMods.Add(new ModItem 
+                    { 
+                        PublishedFileId = id, 
+                        DisplayLabel = ModListService.GetDisplayLabelForId(id) 
+                    });
                     added++;
                 }
             }
             _current.ModIds = _current.ModIds.Distinct().ToList();
-            ModsList.ItemsSource = _current.ModIds.Select(id => ModListService.GetDisplayLabelForId(id)).ToList();
             ModsCountText.Text = $"Mods: {_current.ModIds.Count} (added {added})";
+            
+            // Re-check updates for the newly added mods if needed, or just all
+            _ = CheckForModUpdatesAsync();
         }
 
         private void RefreshModListPathLabel()
@@ -356,7 +508,7 @@ namespace ConanMultiServerLauncher
             }
         }
 
-        private void Launch_Click(object sender, RoutedEventArgs e)
+        private async void Launch_Click(object sender, RoutedEventArgs e)
         {
             try
             {
@@ -366,12 +518,46 @@ namespace ConanMultiServerLauncher
                     return;
                 }
 
+                // Check for updates/downloads before launch
+                var missingIds = _current.ModIds.Where(id => ModListService.TryGetPakPathForId(id) == null).ToList();
+                if (missingIds.Count > 0)
+                {
+                    var result = System.Windows.MessageBox.Show($"{missingIds.Count} mods in this profile are not installed. Would you like to download them now via SteamCMD?", "Download Missing Mods", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (result == MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            await SteamCmdService.DownloadModsAsync(missingIds, msg => Debug.WriteLine($"[SteamCMD] {msg}"));
+                            SetCurrent(_current);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Windows.MessageBox.Show($"Download failed: {ex.Message}");
+                            return; // Don't launch if download failed and was requested
+                        }
+                    }
+                }
+
+                await CheckForModUpdatesAsync();
+
+                // If any mod needs update, notify user (optional, but good for UX)
+                if (_currentMods.Any(m => m.NeedsUpdate))
+                {
+                    var result = System.Windows.MessageBox.Show("Some mods appear to have updates available (marked in orange). Launch anyway?", "Updates Available", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                    if (result != MessageBoxResult.Yes) return;
+                }
+
                 // Ensure modlist is written before launch
                 ModListService.WriteConanModListTxt(_current.ModIds);
 
-                // Update last-connected server in GameUserSettings.ini so the launcher can connect
-                if (!string.IsNullOrWhiteSpace(_current.ServerAddress))
+                // Update last-connected server in config files so the game can connect via -continuesession
+                if (string.Equals(_current.ServerAddress, "singleplayer", StringComparison.OrdinalIgnoreCase))
                 {
+                    GameConfigService.UpdateSingleplayerMode();
+                }
+                else
+                {
+                    // Even if address is empty, we update (passing empty strings) to clear old values
                     GameConfigService.UpdateLastConnectedServer(_current.ServerAddress, _current.Password);
                 }
 
@@ -427,10 +613,29 @@ namespace ConanMultiServerLauncher
                     SettingsService.Save(settings);
                 }
 
-                // Optionally write mod list on profile change
-                if (settings.WriteModListOnProfileChange && _current != null)
+                // Update mod list and server config on profile change
+                if (_current != null)
                 {
-                    try { ModListService.WriteConanModListTxt(_current.ModIds); } catch { }
+                    try
+                    {
+                        // Always update server config so "Launch" can continue session
+                        if (string.Equals(_current.ServerAddress, "singleplayer", StringComparison.OrdinalIgnoreCase))
+                        {
+                            GameConfigService.UpdateSingleplayerMode();
+                        }
+                        else
+                        {
+                            // Even if address is empty, we update (passing empty strings) to clear old values
+                            GameConfigService.UpdateLastConnectedServer(_current.ServerAddress, _current.Password);
+                        }
+
+                        // Write mod list
+                        ModListService.WriteConanModListTxt(_current.ModIds);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[ProfileChange] Failed to update config: {ex.Message}");
+                    }
                 }
             }
         }
@@ -451,7 +656,8 @@ namespace ConanMultiServerLauncher
                     "ConanSandbox",       // Main game
                     "ConanSandbox_BE",    // BattlEye launcher for Conan
                     "BEService",          // BattlEye service (some installs)
-                    "BEService_x64"       // BattlEye service we may have started
+                    "BEService_x64",      // BattlEye service we may have started
+                    "steamcmd"            // SteamCMD if it hangs
                 };
 
                 foreach (var name in targetNames)

@@ -44,6 +44,24 @@
             <Setter Property="Background" Value="#262626"/>
             <Setter Property="Foreground" Value="{StaticResource InputForegroundBrush}"/>
             <Setter Property="BorderBrush" Value="{StaticResource InputBorderBrush}"/>
+            <Setter Property="ItemTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding DisplayLabel}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{StaticResource InputForegroundBrush}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding NeedsUpdate}" Value="True">
+                                            <Setter Property="Foreground" Value="Orange"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style TargetType="GroupBox">
             <Setter Property="Foreground" Value="{StaticResource InputForegroundBrush}"/>
@@ -204,6 +222,7 @@
                         <Button Content="Paste Collection" Width="140" Margin="8,0,0,0" Click="PasteCollection_Click"/>
                         <Button Content="Load from .txt" Width="140" Margin="8,0,0,0" Click="LoadModsFromFile_Click"/>
                         <Button Content="Clear Mods" Width="120" Margin="8,0,0,0" Click="ClearMods_Click"/>
+                        <Button Content="Check for Updates" Width="140" Margin="8,0,0,0" Click="CheckUpdatesManual_Click"/>
                         <TextBlock x:Name="ModsCountText" VerticalAlignment="Center" Margin="8,0,0,0"/>
                     </StackPanel>
                     <Grid Margin="0,8,0,0">

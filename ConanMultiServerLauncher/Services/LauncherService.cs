@@ -57,7 +57,7 @@ namespace ConanMultiServerLauncher.Services
                 UseShellExecute = false,
                 CreateNoWindow = false,
                 WorkingDirectory = Path.GetDirectoryName(exePath)!,
-                Arguments = settings.TextureStreamingEnabled ? string.Empty : "-notexturestreaming"
+                Arguments = (settings.TextureStreamingEnabled ? string.Empty : "-notexturestreaming") + " -continuesession"
             };
             Process.Start(psi);
         }

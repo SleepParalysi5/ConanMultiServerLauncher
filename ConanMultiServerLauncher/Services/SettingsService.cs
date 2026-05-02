@@ -17,6 +17,7 @@ namespace ConanMultiServerLauncher.Services
 
         // Texture streaming: enabled by default; when disabled we pass -notexturestreaming to the game
         public bool TextureStreamingEnabled { get; set; } = true;
+        public string? SteamCmdPath { get; set; }
 
         // Whether startup environment check message has been shown at least once
         public bool HasShownStartupCheck { get; set; } = false;

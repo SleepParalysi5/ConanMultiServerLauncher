@@ -14,6 +14,20 @@ namespace ConanMultiServerLauncher
             CloseAfterLaunchCheck.IsChecked = _settings.CloseLauncherAfterLaunch;
             WriteModListOnChangeCheck.IsChecked = _settings.WriteModListOnProfileChange;
             TextureStreamingCheck.IsChecked = _settings.TextureStreamingEnabled;
+            SteamCmdPathBox.Text = _settings.SteamCmdPath ?? string.Empty;
+        }
+
+        private void BrowseSteamCmd_Click(object sender, RoutedEventArgs e)
+        {
+            var ofd = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "steamcmd.exe|steamcmd.exe|Executable Files (*.exe)|*.exe",
+                Title = "Select steamcmd.exe"
+            };
+            if (ofd.ShowDialog() == true)
+            {
+                SteamCmdPathBox.Text = ofd.FileName;
+            }
         }
 
         private void Ok_Click(object sender, RoutedEventArgs e)
@@ -21,6 +35,7 @@ namespace ConanMultiServerLauncher
             _settings.CloseLauncherAfterLaunch = CloseAfterLaunchCheck.IsChecked == true;
             _settings.WriteModListOnProfileChange = WriteModListOnChangeCheck.IsChecked == true;
             _settings.TextureStreamingEnabled = TextureStreamingCheck.IsChecked != false; // default to true when null
+            _settings.SteamCmdPath = string.IsNullOrWhiteSpace(SteamCmdPathBox.Text) ? null : SteamCmdPathBox.Text.Trim();
             SettingsService.Save(_settings);
             DialogResult = true;
             Close();
