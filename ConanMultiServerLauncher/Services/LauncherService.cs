@@ -1,13 +1,14 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace ConanMultiServerLauncher.Services
 {
     public static class LauncherService
     {
         // Launch Conan directly, choosing BattlEye or non-BattlEye executable, continue last session
-        public static void LaunchConan(bool battlEyeEnabled, string? serverAddress = null, string? password = null)
+        public static async Task LaunchConanAsync(bool battlEyeEnabled, string? serverAddress = null, string? password = null)
         {
             // serverAddress/password not passed as args; we set last-connected server in GameUserSettings.ini separately
             var conanRoot = PathsService.GetConanRoot();
@@ -31,21 +32,17 @@ namespace ConanMultiServerLauncher.Services
                         var bePsi = new ProcessStartInfo
                         {
                             FileName = beService,
-                            UseShellExecute = false,
+                            UseShellExecute = true, // UseShellExecute true can help with UAC if needed
                             CreateNoWindow = true,
                             WorkingDirectory = Path.GetDirectoryName(beService)!
                         };
                         Process.Start(bePsi);
                     }
-                    else
-                    {
-                        // Do not block launching the game; just inform via exception message path if later fails
-                        // Alternatively, could log somewhere; keeping silent to avoid UX noise.
-                    }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Swallow errors from BE service start to not prevent game launch.
+                    // Log but don't prevent game launch
+                    Console.WriteLine($"[LauncherService] Failed to start BattlEye service: {ex.Message}");
                 }
             }
 
@@ -57,9 +54,10 @@ namespace ConanMultiServerLauncher.Services
                 UseShellExecute = false,
                 CreateNoWindow = false,
                 WorkingDirectory = Path.GetDirectoryName(exePath)!,
-                Arguments = (settings.TextureStreamingEnabled ? string.Empty : "-notexturestreaming") + " -continuesession"
+                Arguments = (settings.TextureStreamingEnabled ? string.Empty : "-notexturestreaming ") + "-continuesession"
             };
-            Process.Start(psi);
+            
+            await Task.Run(() => Process.Start(psi));
         }
     }
 }

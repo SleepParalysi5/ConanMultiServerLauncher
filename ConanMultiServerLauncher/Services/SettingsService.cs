@@ -54,7 +54,18 @@ namespace ConanMultiServerLauncher.Services
         {
             _cached = settings;
             var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(FilePath, json);
+            
+            var tempPath = FilePath + ".tmp";
+            try
+            {
+                File.WriteAllText(tempPath, json);
+                if (File.Exists(FilePath)) File.Delete(FilePath);
+                File.Move(tempPath, FilePath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SettingsService] Failed to save settings: {ex.Message}");
+            }
         }
     }
 }

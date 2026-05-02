@@ -56,7 +56,18 @@ namespace ConanMultiServerLauncher.Services
                 .ToList();
 
             var json = JsonSerializer.Serialize(cleaned, _jsonOptions);
-            File.WriteAllText(_profilesPath, json);
+            
+            var tempPath = _profilesPath + ".tmp";
+            try
+            {
+                File.WriteAllText(tempPath, json);
+                if (File.Exists(_profilesPath)) File.Delete(_profilesPath);
+                File.Move(tempPath, _profilesPath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ProfilesService] Failed to save profiles: {ex.Message}");
+            }
         }
     }
 }

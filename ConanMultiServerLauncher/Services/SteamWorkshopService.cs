@@ -13,7 +13,7 @@ namespace ConanMultiServerLauncher.Services
         private static readonly HttpClient Http = new HttpClient();
         private static readonly Regex AnyIdRegex = new("(?<!\\d)(\\d{6,12})(?!\\d)", RegexOptions.Compiled);
         private static readonly Regex CollectionUrlRegex = new(
-            @"steamcommunity\\.com/(?:workshop/)?filedetails/\\?id=(\\d+)|steamcommunity\\.com/workshop/browse/\\?\\S*collection=(\\d+)",
+            @"steamcommunity\.com/(?:workshop/)?filedetails/\?id=(\d+)|steamcommunity\.com/workshop/browse/\?\S*collection=(\d+)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public static bool TryExtractCollectionId(string text, out long collectionId)
@@ -64,8 +64,8 @@ namespace ConanMultiServerLauncher.Services
             var children = childrenElem
                 .EnumerateArray()
                 .Select(e => e.GetProperty("publishedfileid").GetString())
-                .Where(s => long.TryParse(s, out _))
-                .Select(long.Parse)
+                .Where(s => !string.IsNullOrEmpty(s) && long.TryParse(s, out _))
+                .Select(s => long.Parse(s!))
                 .Distinct()
                 .ToList();
 
@@ -79,30 +79,27 @@ namespace ConanMultiServerLauncher.Services
 
             var result = new List<long>();
             const int batch = 100;
+            var tasks = new List<Task<List<long>>>();
+
             for (int i = 0; i < list.Count; i += batch)
             {
                 var slice = list.Skip(i).Take(batch).ToList();
-                var url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
-                var kv = new List<KeyValuePair<string, string>> { new("itemcount", slice.Count.ToString()) };
-                for (int j = 0; j < slice.Count; j++)
-                    kv.Add(new($"publishedfileids[{j}]", slice[j].ToString()));
-
-                using var form = new FormUrlEncodedContent(kv);
-                using var resp = await Http.PostAsync(url, form).ConfigureAwait(false);
-                resp.EnsureSuccessStatusCode();
-                var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-                var details = doc.RootElement.GetProperty("response").GetProperty("publishedfiledetails").EnumerateArray();
-                foreach (var d in details)
+                tasks.Add(GetPublishedFileDetailsAsync(slice, d =>
                 {
                     var idStr = d.GetProperty("publishedfileid").GetString();
                     var appId = d.TryGetProperty("consumer_app_id", out var app) ? app.GetInt32() : 0;
                     if (appId == 440900 && long.TryParse(idStr, out var id))
-                        result.Add(id);
-                }
+                        return id;
+                    return (long?)null;
+                }));
             }
+
+            var results = await Task.WhenAll(tasks);
+            foreach (var r in results) result.AddRange(r);
+
             return result.Distinct().ToList();
         }
+
         public static async Task<List<ModUpdateInfo>> GetModsUpdateInfoAsync(IEnumerable<long> ids)
         {
             var list = ids?.Distinct().ToList() ?? new();
@@ -110,21 +107,12 @@ namespace ConanMultiServerLauncher.Services
 
             var result = new List<ModUpdateInfo>();
             const int batch = 100;
+            var tasks = new List<Task<List<ModUpdateInfo>>>();
+
             for (int i = 0; i < list.Count; i += batch)
             {
                 var slice = list.Skip(i).Take(batch).ToList();
-                var url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
-                var kv = new List<KeyValuePair<string, string>> { new("itemcount", slice.Count.ToString()) };
-                for (int j = 0; j < slice.Count; j++)
-                    kv.Add(new($"publishedfileids[{j}]", slice[j].ToString()));
-
-                using var form = new FormUrlEncodedContent(kv);
-                using var resp = await Http.PostAsync(url, form).ConfigureAwait(false);
-                resp.EnsureSuccessStatusCode();
-                var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(json);
-                var details = doc.RootElement.GetProperty("response").GetProperty("publishedfiledetails").EnumerateArray();
-                foreach (var d in details)
+                tasks.Add(GetPublishedFileDetailsAsync(slice, d =>
                 {
                     if (d.TryGetProperty("publishedfileid", out var idProp) && 
                         long.TryParse(idProp.GetString(), out var id))
@@ -134,12 +122,64 @@ namespace ConanMultiServerLauncher.Services
                             info.TimeUpdated = timeProp.GetUInt64();
                         if (d.TryGetProperty("title", out var titleProp))
                             info.Title = titleProp.GetString();
-                        
-                        result.Add(info);
+                        return info;
                     }
-                }
+                    return null;
+                }));
             }
+
+            var results = await Task.WhenAll(tasks);
+            foreach (var r in results) result.AddRange(r);
+
             return result;
+        }
+
+        private static async Task<List<T>> GetPublishedFileDetailsAsync<T>(List<long> ids, Func<JsonElement, T?> selector) where T : class
+        {
+            var url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
+            var kv = new List<KeyValuePair<string, string>> { new("itemcount", ids.Count.ToString()) };
+            for (int j = 0; j < ids.Count; j++)
+                kv.Add(new($"publishedfileids[{j}]", ids[j].ToString()));
+
+            using var form = new FormUrlEncodedContent(kv);
+            using var resp = await Http.PostAsync(url, form).ConfigureAwait(false);
+            resp.EnsureSuccessStatusCode();
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            
+            using var doc = JsonDocument.Parse(json);
+            var details = doc.RootElement.GetProperty("response").GetProperty("publishedfiledetails").EnumerateArray();
+            
+            var results = new List<T>();
+            foreach (var d in details)
+            {
+                var item = selector(d);
+                if (item != null) results.Add(item);
+            }
+            return results;
+        }
+
+        private static async Task<List<long>> GetPublishedFileDetailsAsync(List<long> ids, Func<JsonElement, long?> selector)
+        {
+            var url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
+            var kv = new List<KeyValuePair<string, string>> { new("itemcount", ids.Count.ToString()) };
+            for (int j = 0; j < ids.Count; j++)
+                kv.Add(new($"publishedfileids[{j}]", ids[j].ToString()));
+
+            using var form = new FormUrlEncodedContent(kv);
+            using var resp = await Http.PostAsync(url, form).ConfigureAwait(false);
+            resp.EnsureSuccessStatusCode();
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            
+            using var doc = JsonDocument.Parse(json);
+            var details = doc.RootElement.GetProperty("response").GetProperty("publishedfiledetails").EnumerateArray();
+            
+            var results = new List<long>();
+            foreach (var d in details)
+            {
+                var item = selector(d);
+                if (item.HasValue) results.Add(item.Value);
+            }
+            return results;
         }
     }
 

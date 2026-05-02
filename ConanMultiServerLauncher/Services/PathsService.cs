@@ -3,21 +3,37 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace ConanMultiServerLauncher.Services
 {
     public static class PathsService
     {
+        private static string? _cachedSteamRoot;
+        private static string? _cachedConanRoot;
+        private static List<string>? _cachedSteamAppsRoots;
+
         // 1) Steam root from registry or default
         public static string? GetSteamRoot()
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\\Valve\\Steam");
+            if (_cachedSteamRoot != null) return _cachedSteamRoot;
+
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
             var path = key?.GetValue("SteamPath") as string;
             if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+            {
+                _cachedSteamRoot = path;
                 return path;
+            }
 
             var defaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Steam");
-            return Directory.Exists(defaultPath) ? defaultPath : null;
+            if (Directory.Exists(defaultPath))
+            {
+                _cachedSteamRoot = defaultPath;
+                return defaultPath;
+            }
+
+            return null;
         }
 
         public static string? GetSteamExe()
@@ -28,48 +44,65 @@ namespace ConanMultiServerLauncher.Services
             return File.Exists(exe) ? exe : null;
         }
 
-        // 2) Enumerate all Steam library roots (…\\steamapps)
+        // 2) Enumerate all Steam library roots (…\steamapps)
         private static IEnumerable<string> EnumerateSteamAppsRoots()
         {
+            if (_cachedSteamAppsRoots != null) return _cachedSteamAppsRoots;
+
+            var roots = new List<string>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var steamRoot = GetSteamRoot();
             if (steamRoot != null)
             {
                 var main = Path.Combine(steamRoot, "steamapps");
                 if (Directory.Exists(main) && seen.Add(main))
-                    yield return main;
+                    roots.Add(main);
 
                 var vdf = Path.Combine(main, "libraryfolders.vdf");
                 foreach (var root in ParseLibraryFolders(vdf))
                 {
                     var apps = Path.Combine(root, "steamapps");
                     if (Directory.Exists(apps) && seen.Add(apps))
-                        yield return apps;
+                        roots.Add(apps);
                 }
             }
+            _cachedSteamAppsRoots = roots;
+            return roots;
         }
 
-        // Parses libraryfolders.vdf for library paths (lenient)
+        // Parses libraryfolders.vdf for library paths (lenient) using Regex for robustness
+        private static readonly Regex VdfPathRegex = new("\"path\"\\s+\"([^\"]+)\"", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         private static IEnumerable<string> ParseLibraryFolders(string vdfPath)
         {
-            if (!File.Exists(vdfPath)) yield break;
-            var text = File.ReadAllText(vdfPath);
-            foreach (var line in text.Split('\n'))
+            if (!File.Exists(vdfPath)) return Enumerable.Empty<string>();
+            
+            var results = new List<string>();
+            try
             {
-                var trimmed = line.Trim();
-                if (!trimmed.StartsWith("\"path\"", StringComparison.OrdinalIgnoreCase)) continue;
-                var parts = trimmed.Split('"');
-                if (parts.Length >= 4)
+                var text = File.ReadAllText(vdfPath);
+                var matches = VdfPathRegex.Matches(text);
+                foreach (Match match in matches)
                 {
-                    var path = parts[3].Replace('/', '\\');
-                    if (Directory.Exists(path))
-                        yield return path;
+                    if (match.Groups.Count >= 2)
+                    {
+                        var path = match.Groups[1].Value.Replace("\\\\", "\\").Replace('/', '\\');
+                        if (Directory.Exists(path))
+                            results.Add(path);
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[PathsService] Error parsing VDF {vdfPath}: {ex.Message}");
+            }
+            return results;
         }
 
         public static string? GetConanRoot()
         {
+            if (_cachedConanRoot != null) return _cachedConanRoot;
+
             // Override via settings
             var settings = SettingsService.Load();
             if (!string.IsNullOrWhiteSpace(settings.ConanModsFolderOverride))
@@ -79,7 +112,10 @@ namespace ConanMultiServerLauncher.Services
                 {
                     var conan = Directory.GetParent(mods)?.Parent?.FullName;
                     if (!string.IsNullOrWhiteSpace(conan) && Directory.Exists(conan))
+                    {
+                        _cachedConanRoot = conan;
                         return conan;
+                    }
                 }
             }
 
@@ -88,9 +124,19 @@ namespace ConanMultiServerLauncher.Services
             {
                 var conan = Path.Combine(apps, "common", "Conan Exiles");
                 if (Directory.Exists(conan))
+                {
+                    _cachedConanRoot = conan;
                     return conan;
+                }
             }
             return null;
+        }
+
+        public static void ClearCache()
+        {
+            _cachedSteamRoot = null;
+            _cachedConanRoot = null;
+            _cachedSteamAppsRoots = null;
         }
 
         public static string? GetConanModsFolder()
@@ -192,7 +238,7 @@ namespace ConanMultiServerLauncher.Services
             return Path.Combine(dir, "modlist.txt");
         }
 
-        public static string GetGameIni(bool useLocalAppData = true)
+        public static string? GetGameIni(bool useLocalAppData = true)
         {
             if (useLocalAppData)
             {
@@ -205,7 +251,7 @@ namespace ConanMultiServerLauncher.Services
             return Path.Combine(root, "ConanSandbox", "Saved", "Config", "WindowsNoEditor", "Game.ini");
         }
 
-        public static string GetGameUserSettingsIni(bool useLocalAppData = true)
+        public static string? GetGameUserSettingsIni(bool useLocalAppData = true)
         {
             if (useLocalAppData)
             {

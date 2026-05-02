@@ -3,45 +3,48 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace ConanMultiServerLauncher.Services
 {
     public static class GameConfigService
     {
         // Updates LastConnected, LastPassword and StartedListenServerSession in Game.ini
-        public static void UpdateLastConnectedServer(string? serverAddress, string? password)
+        public static async Task UpdateLastConnectedServerAsync(string? serverAddress, string? password)
         {
-            UpdateGameIni(serverAddress, password, false);
+            await UpdateGameIniAsync(serverAddress, password, false);
         }
 
-        public static void UpdateSingleplayerMode()
+        public static async Task UpdateSingleplayerModeAsync()
         {
-            UpdateGameIni(null, null, true);
+            await UpdateGameIniAsync(null, null, true);
         }
 
-        private static void UpdateGameIni(string? serverAddress, string? password, bool isSingleplayer)
+        private static async Task UpdateGameIniAsync(string? serverAddress, string? password, bool isSingleplayer)
         {
             // Update BOTH LocalAppData and Game-folder config files
-            UpdateGameIniAtPath(PathsService.GetGameIni(true), serverAddress, password, isSingleplayer);
+            await UpdateGameIniAtPathAsync(PathsService.GetGameIni(true), serverAddress, password, isSingleplayer);
             
             var gameFolderIni = PathsService.GetGameIni(false);
             if (!string.IsNullOrEmpty(gameFolderIni))
             {
-                UpdateGameIniAtPath(gameFolderIni, serverAddress, password, isSingleplayer);
+                await UpdateGameIniAtPathAsync(gameFolderIni, serverAddress, password, isSingleplayer);
             }
 
             // To be absolutely sure, we also update GameUserSettings.ini for StartedListenServerSession
-            UpdateGameUserSettingsIni(isSingleplayer);
+            await UpdateGameUserSettingsIniAsync(isSingleplayer);
         }
 
-        private static void UpdateGameIniAtPath(string iniPath, string? serverAddress, string? password, bool isSingleplayer)
+        private static async Task UpdateGameIniAtPathAsync(string iniPath, string? serverAddress, string? password, bool isSingleplayer)
         {
             if (string.IsNullOrEmpty(iniPath)) return;
             
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(iniPath)!);
-                var lines = File.Exists(iniPath) ? File.ReadAllLines(iniPath).ToList() : new List<string>();
+                var directoryName = Path.GetDirectoryName(iniPath);
+                if (directoryName != null) Directory.CreateDirectory(directoryName);
+                
+                var lines = File.Exists(iniPath) ? (await File.ReadAllLinesAsync(iniPath)).ToList() : new List<string>();
 
                 // Sections we need to update
                 EnsureSection(lines, "SavedServers");
@@ -63,7 +66,7 @@ namespace ConanMultiServerLauncher.Services
                 if (password != null)
                     UpsertKey(lines, serStart, serEnd, "LastPassword", password);
 
-                File.WriteAllLines(iniPath, lines, new UTF8Encoding(false));
+                await WriteAtomicAsync(iniPath, lines);
             }
             catch (Exception ex)
             {
@@ -71,36 +74,46 @@ namespace ConanMultiServerLauncher.Services
             }
         }
 
-        private static void UpdateGameUserSettingsIni(bool isSingleplayer)
+        private static async Task UpdateGameUserSettingsIniAsync(bool isSingleplayer)
         {
-            UpdateGameUserSettingsIniAtPath(PathsService.GetGameUserSettingsIni(true), isSingleplayer);
+            await UpdateGameUserSettingsIniAtPathAsync(PathsService.GetGameUserSettingsIni(true), isSingleplayer);
             
             var gameFolderIni = PathsService.GetGameUserSettingsIni(false);
             if (!string.IsNullOrEmpty(gameFolderIni))
             {
-                UpdateGameUserSettingsIniAtPath(gameFolderIni, isSingleplayer);
+                await UpdateGameUserSettingsIniAtPathAsync(gameFolderIni, isSingleplayer);
             }
         }
 
-        private static void UpdateGameUserSettingsIniAtPath(string iniPath, bool isSingleplayer)
+        private static async Task UpdateGameUserSettingsIniAtPathAsync(string iniPath, bool isSingleplayer)
         {
             if (string.IsNullOrEmpty(iniPath)) return;
             
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(iniPath)!);
-                var lines = File.Exists(iniPath) ? File.ReadAllLines(iniPath).ToList() : new List<string>();
+                var directoryName = Path.GetDirectoryName(iniPath);
+                if (directoryName != null) Directory.CreateDirectory(directoryName);
+                
+                var lines = File.Exists(iniPath) ? (await File.ReadAllLinesAsync(iniPath)).ToList() : new List<string>();
 
                 EnsureSection(lines, "SavedCoopData");
                 var (start, end) = GetSectionRange(lines, "SavedCoopData");
                 UpsertKey(lines, start, end, "StartedListenServerSession", isSingleplayer ? "True" : "False");
 
-                File.WriteAllLines(iniPath, lines, new UTF8Encoding(false));
+                await WriteAtomicAsync(iniPath, lines);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[GameConfigService] Failed to update GameUserSettings.ini at {iniPath}: {ex.Message}");
             }
+        }
+
+        private static async Task WriteAtomicAsync(string path, List<string> lines)
+        {
+            var tempPath = path + ".tmp";
+            await File.WriteAllLinesAsync(tempPath, lines, new UTF8Encoding(false));
+            if (File.Exists(path)) File.Delete(path);
+            File.Move(tempPath, path);
         }
 
         private static (string? ip, int port) ParseServerAddress(string? serverAddress)

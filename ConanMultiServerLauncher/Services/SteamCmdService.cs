@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ConanMultiServerLauncher.Services
@@ -22,7 +23,7 @@ namespace ConanMultiServerLauncher.Services
             return null;
         }
 
-        public static async Task DownloadModsAsync(IEnumerable<long> modIds, Action<string>? logger = null)
+        public static async Task DownloadModsAsync(IEnumerable<long> modIds, Action<string>? logger = null, CancellationToken ct = default)
         {
             var steamCmd = GetSteamCmdPath();
             if (string.IsNullOrEmpty(steamCmd))
@@ -81,7 +82,19 @@ namespace ConanMultiServerLauncher.Services
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await process.WaitForExitAsync();
+            try
+            {
+                await process.WaitForExitAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(true);
+                    logger?.Invoke("SteamCMD download cancelled.");
+                }
+                throw;
+            }
             
             logger?.Invoke($"SteamCMD exited with code {process.ExitCode}");
         }

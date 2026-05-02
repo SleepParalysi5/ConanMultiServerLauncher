@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace ConanMultiServerLauncher.Services
 {
@@ -69,7 +70,7 @@ namespace ConanMultiServerLauncher.Services
 
         // Writes absolute .pak paths into servermodlist.txt (one per line).
         // Requires a known Workshop path so we can resolve real .pak file locations.
-        public static void WriteConanModListTxt(IEnumerable<long> modIds)
+        public static async Task WriteConanModListTxtAsync(IEnumerable<long> modIds)
         {
             var idsList = modIds?.Distinct().ToList() ?? new();
             var serverModListPath = PathsService.GetConanServerModListTxt();
@@ -106,15 +107,17 @@ namespace ConanMultiServerLauncher.Services
             }
 
             // Write ConanSandbox\\servermodlist.txt (game install)
-            Directory.CreateDirectory(Path.GetDirectoryName(serverModListPath)!);
-            File.WriteAllLines(serverModListPath, serverLines);
+            var serverDir = Path.GetDirectoryName(serverModListPath);
+            if (serverDir != null) Directory.CreateDirectory(serverDir);
+            await File.WriteAllLinesAsync(serverModListPath, serverLines);
 
             // Write %LocalAppData% modlist.txt (user config) WITHOUT leading '*'
             var localModListPath = PathsService.GetLocalAppDataModListTxt();
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(localModListPath)!);
-                File.WriteAllLines(localModListPath, localLines);
+                var localDir = Path.GetDirectoryName(localModListPath);
+                if (localDir != null) Directory.CreateDirectory(localDir);
+                await File.WriteAllLinesAsync(localModListPath, localLines);
             }
             catch
             {
@@ -129,7 +132,7 @@ namespace ConanMultiServerLauncher.Services
                 try
                 {
                     Directory.CreateDirectory(modsFolder);
-                    File.WriteAllLines(modsModListPath, localLines);
+                    await File.WriteAllLinesAsync(modsModListPath, localLines);
                 }
                 catch
                 {
@@ -139,9 +142,9 @@ namespace ConanMultiServerLauncher.Services
         }
 
         // Reads a .txt (for example copied from a server or your own list) and extracts IDs
-        public static List<long> ReadIdsFromTextFile(string filePath)
+        public static async Task<List<long>> ReadIdsFromTextFileAsync(string filePath)
         {
-            var text = File.ReadAllText(filePath);
+            var text = await File.ReadAllTextAsync(filePath);
             return ExtractModIdsFromAny(text);
         }
     }

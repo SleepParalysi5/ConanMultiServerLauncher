@@ -281,7 +281,7 @@ namespace ConanMultiServerLauncher
             }
         }
 
-        private void LoadModsFromFile_Click(object sender, RoutedEventArgs e)
+        private async void LoadModsFromFile_Click(object sender, RoutedEventArgs e)
         {
             if (_current == null) return;
             var ofd = new Microsoft.Win32.OpenFileDialog
@@ -290,7 +290,7 @@ namespace ConanMultiServerLauncher
             };
             if (ofd.ShowDialog() == true)
             {
-                var ids = ModListService.ReadIdsFromTextFile(ofd.FileName);
+                var ids = await ModListService.ReadIdsFromTextFileAsync(ofd.FileName);
                 if (ids.Count == 0)
                 {
                     System.Windows.MessageBox.Show("No Workshop IDs found in file. Tip: include URLs/IDs or .pak filenames/paths.");
@@ -494,12 +494,12 @@ namespace ConanMultiServerLauncher
             }
         }
 
-        private void WriteModList_Click(object sender, RoutedEventArgs e)
+        private async void WriteModList_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 if (_current == null) return;
-                ModListService.WriteConanModListTxt(_current.ModIds);
+                await ModListService.WriteConanModListTxtAsync(_current.ModIds);
                 System.Windows.MessageBox.Show("servermodlist.txt and modlist.txt updated.");
             }
             catch (Exception ex)
@@ -548,20 +548,20 @@ namespace ConanMultiServerLauncher
                 }
 
                 // Ensure modlist is written before launch
-                ModListService.WriteConanModListTxt(_current.ModIds);
+                await ModListService.WriteConanModListTxtAsync(_current.ModIds);
 
                 // Update last-connected server in config files so the game can connect via -continuesession
                 if (string.Equals(_current.ServerAddress, "singleplayer", StringComparison.OrdinalIgnoreCase))
                 {
-                    GameConfigService.UpdateSingleplayerMode();
+                    await GameConfigService.UpdateSingleplayerModeAsync();
                 }
                 else
                 {
                     // Even if address is empty, we update (passing empty strings) to clear old values
-                    GameConfigService.UpdateLastConnectedServer(_current.ServerAddress, _current.Password);
+                    await GameConfigService.UpdateLastConnectedServerAsync(_current.ServerAddress, _current.Password);
                 }
 
-                LauncherService.LaunchConan(_current.BattlEyeEnabled, _current.ServerAddress, _current.Password);
+                await LauncherService.LaunchConanAsync(_current.BattlEyeEnabled, _current.ServerAddress, _current.Password);
 
                 // Close after launch if enabled in settings
                 var settings = SettingsService.Load();
@@ -597,7 +597,7 @@ namespace ConanMultiServerLauncher
             }
         }
 
-        private void ProfilesCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        private async void ProfilesCombo_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             if (_isInitializing) return; // ignore events during startup
 
@@ -621,16 +621,16 @@ namespace ConanMultiServerLauncher
                         // Always update server config so "Launch" can continue session
                         if (string.Equals(_current.ServerAddress, "singleplayer", StringComparison.OrdinalIgnoreCase))
                         {
-                            GameConfigService.UpdateSingleplayerMode();
+                            await GameConfigService.UpdateSingleplayerModeAsync();
                         }
                         else
                         {
                             // Even if address is empty, we update (passing empty strings) to clear old values
-                            GameConfigService.UpdateLastConnectedServer(_current.ServerAddress, _current.Password);
+                            await GameConfigService.UpdateLastConnectedServerAsync(_current.ServerAddress, _current.Password);
                         }
 
                         // Write mod list
-                        ModListService.WriteConanModListTxt(_current.ModIds);
+                        await ModListService.WriteConanModListTxtAsync(_current.ModIds);
                     }
                     catch (Exception ex)
                     {
